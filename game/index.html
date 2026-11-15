@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EMBERLINE — 5v5 Tactical FPS</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.min.js"
+  }
+}
+</script>
+<style>
+  :root {
+    --canvas: #1a1712;
+    --surface: #2a2721;
+    --hairline: #4a4238;
+    --ink: #ece5d3;
+    --muted: #7d94a0;
+    --accent: #f08a2e;
+    --slate: #3fb8ae;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--canvas); }
+  body { font-family: "Segoe UI", system-ui, sans-serif; color: var(--ink); }
+  #game, #gl { position: fixed; inset: 0; }
+  #gl { display: block; }
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+
+  /* Top bar: Ember score — timer — Slate score */
+  #topbar {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 14px; align-items: center;
+    background: rgba(42,39,33,0.82); border: 1px solid var(--hairline);
+    padding: 6px 18px; border-radius: 4px; font-weight: 700; letter-spacing: 1px;
+  }
+  #scoreEmber { color: var(--accent); }
+  #scoreSlate { color: var(--slate); }
+  #timerText { font-size: 20px; min-width: 64px; text-align: center; }
+  #timerText.low { color: #ff5a4e; }
+
+  /* Bomb banner, top-left */
+  #bombBanner {
+    position: absolute; top: 14px; left: 14px; display: none;
+    background: rgba(120,30,20,0.85); border: 1px solid #ff5a4e;
+    color: #ffd9d0; padding: 6px 12px; border-radius: 4px;
+    font-weight: 700; letter-spacing: 1px; font-size: 13px;
+  }
+
+  /* Kill feed, top-right */
+  #killfeed { position: absolute; top: 14px; right: 14px; text-align: right; }
+  .feed-row {
+    background: rgba(42,39,33,0.82); border: 1px solid var(--hairline);
+    padding: 4px 10px; margin-bottom: 4px; border-radius: 3px; font-size: 13px;
+  }
+
+  /* Round banner, centre */
+  #roundBanner {
+    position: absolute; top: 26%; left: 50%; transform: translateX(-50%);
+    display: none; text-align: center;
+    background: rgba(26,23,18,0.78); border: 1px solid var(--hairline);
+    padding: 18px 42px; border-radius: 6px;
+  }
+  #roundBannerTitle { font-size: 34px; font-weight: 800; letter-spacing: 4px; color: var(--accent); }
+  #roundBannerSub { font-size: 15px; color: var(--ink); margin-top: 6px; }
+
+  /* Crosshair: 4 lines + dot, gap driven by live spread */
+  #crosshair {
+    --gap: 8px;
+    position: absolute; left: 50%; top: 50%; width: 0; height: 0;
+  }
+  .ch-line { position: absolute; background: var(--ink); }
+  .ch-t { left: -1px; top: calc(-1 * var(--gap) - 9px); width: 2px; height: 9px; }
+  .ch-b { left: -1px; top: var(--gap); width: 2px; height: 9px; }
+  .ch-l { top: -1px; left: calc(-1 * var(--gap) - 9px); width: 9px; height: 2px; }
+  .ch-r { top: -1px; left: var(--gap); width: 9px; height: 2px; }
+  .ch-dot { position: absolute; left: -1.5px; top: -1.5px; width: 3px; height: 3px; background: var(--ink); border-radius: 50%; }
+
+  /* Hitmarker */
+  #hitmarker {
+    position: absolute; left: 50%; top: 50%; width: 26px; height: 26px;
+    margin: -13px 0 0 -13px; opacity: 0;
+  }
+  #hitmarker::before, #hitmarker::after {
+    content: ""; position: absolute; left: 12px; top: 0; width: 2px; height: 26px; background: var(--ink);
+  }
+  #hitmarker::before { transform: rotate(45deg); }
+  #hitmarker::after { transform: rotate(-45deg); }
+  #hitmarker.show { opacity: 1; }
+  #hitmarker.kill::before, #hitmarker.kill::after { background: #ff5a4e; }
+
+  /* Damage vignette */
+  #vignette {
+    position: absolute; inset: 0; opacity: 0; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(255,40,20,0.45) 100%);
+  }
+  #vignette.flash { animation: vflash 0.35s ease-out; }
+  @keyframes vflash { 0% { opacity: 1; } 100% { opacity: 0; } }
+
+  /* Bottom-left: health + armor */
+  #healthBox { position: absolute; left: 18px; bottom: 18px; width: 240px; }
+  #healthBarWrap { height: 12px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 3px; overflow: hidden; }
+  #healthBar { height: 100%; width: 100%; background: var(--accent); }
+  #healthBar.low { background: #ff5a4e; }
+  #healthNum { font-size: 30px; font-weight: 800; margin-top: 2px; }
+  #healthNum.low { color: #ff5a4e; }
+  #armorNum { font-size: 13px; color: var(--muted); letter-spacing: 1px; }
+
+  /* Bottom-right: ammo, weapon, money */
+  #ammoBox { position: absolute; right: 18px; bottom: 18px; text-align: right; }
+  #moneyNum { color: var(--accent); font-weight: 700; font-size: 17px; letter-spacing: 1px; }
+  #ammoMag { font-size: 42px; font-weight: 800; line-height: 1; }
+  #ammoMag.empty { color: #ff5a4e; }
+  #ammoReserve { font-size: 17px; color: var(--muted); }
+  #weaponName { font-size: 14px; letter-spacing: 2px; }
+  #grenadeNum { font-size: 13px; color: var(--muted); letter-spacing: 1px; margin-top: 2px; }
+
+  /* Hint + channel, bottom-centre */
+  #hintLine { position: absolute; bottom: 92px; left: 50%; transform: translateX(-50%); font-size: 14px; color: var(--ink); text-shadow: 0 1px 3px #000; }
+  #channelWrap { position: absolute; bottom: 130px; left: 50%; transform: translateX(-50%); display: none; width: 280px; text-align: center; }
+  #channelLabel { font-size: 13px; letter-spacing: 2px; margin-bottom: 5px; }
+  #channelBar { height: 8px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 3px; overflow: hidden; }
+  #channelFill { height: 100%; width: 0%; background: var(--accent); }
+
+  /* Buy menu, left */
+  #buyMenu {
+    position: absolute; left: 18px; top: 50%; transform: translateY(-50%);
+    display: none; width: 300px; background: rgba(42,39,33,0.92);
+    border: 1px solid var(--hairline); border-radius: 6px; padding: 14px 16px;
+  }
+  #buyMenu h2 { font-size: 15px; letter-spacing: 3px; color: var(--accent); margin-bottom: 8px; }
+  .buy-row { display: flex; justify-content: space-between; padding: 6px 2px; font-size: 14px; border-bottom: 1px solid var(--hairline); }
+  .buy-row.owned { color: var(--muted); }
+  .buy-row.poor { color: #b06050; }
+  .buy-row:last-child { border-bottom: none; }
+
+  /* Overlays */
+  .overlay {
+    position: fixed; inset: 0; display: none; z-index: 20;
+    align-items: center; justify-content: center; flex-direction: column;
+    background: rgba(26,23,18,0.55);
+  }
+  .panel {
+    background: rgba(42,39,33,0.82); border: 1px solid var(--hairline);
+    border-radius: 8px; padding: 28px 40px; text-align: center; max-width: 560px;
+  }
+  .panel h1 { font-size: 44px; letter-spacing: 8px; color: var(--accent); }
+  .panel h2 { font-size: 26px; letter-spacing: 4px; margin-bottom: 10px; }
+  .panel p { color: var(--ink); font-size: 15px; line-height: 1.6; margin: 8px 0; }
+  .panel .controls { color: var(--muted); font-size: 13px; line-height: 1.9; }
+  .panel button {
+    pointer-events: auto; margin-top: 18px; padding: 12px 34px; font-size: 16px;
+    font-weight: 700; letter-spacing: 2px; color: var(--canvas);
+    background: var(--accent); border: none; border-radius: 4px; cursor: pointer;
+  }
+  .panel button:hover { filter: brightness(1.15); }
+  /* Start cover: a lighter, translucent panel low on screen so the yard
+     behind the title stays visible. */
+  #overlayStart { background: linear-gradient(rgba(26,23,18,0.08) 30%, rgba(26,23,18,0.5)); align-items: flex-end; padding-bottom: 6vh; }
+  #overlayStart .panel { background: rgba(42,39,33,0.72); }
+  #overlayDown .panel { padding: 18px 30px; }
+  #overlayDown h2 { color: #ff5a4e; }
+</style>
+</head>
+<body>
+<div id="game"></div>
+<div id="hud">
+  <div id="topbar"><span id="scoreEmber">0</span><span>EMBER</span><span id="timerText">1:40</span><span>SLATE</span><span id="scoreSlate">0</span></div>
+  <div id="bombBanner"><span id="bombBannerText"></span></div>
+  <div id="killfeed"></div>
+  <div id="roundBanner"><div id="roundBannerTitle"></div><div id="roundBannerSub"></div></div>
+  <div id="crosshair"><div class="ch-line ch-t"></div><div class="ch-line ch-b"></div><div class="ch-line ch-l"></div><div class="ch-line ch-r"></div><div class="ch-dot"></div></div>
+  <div id="hitmarker"></div>
+  <div id="vignette"></div>
+  <div id="healthBox">
+    <div id="healthBarWrap"><div id="healthBar"></div></div>
+    <div id="healthNum">100</div>
+    <div id="armorNum"></div>
+  </div>
+  <div id="ammoBox">
+    <div id="moneyNum">$800</div>
+    <div><span id="ammoMag">12</span> <span id="ammoReserve">/ 48</span></div>
+    <div id="weaponName">P9 SIDEARM</div>
+    <div id="grenadeNum">GRENADES 0</div>
+  </div>
+  <div id="hintLine"></div>
+  <div id="channelWrap"><div id="channelLabel"></div><div id="channelBar"><div id="channelFill"></div></div></div>
+  <div id="buyMenu"><h2>BUY MENU — B TO CLOSE</h2><div id="buyList"></div></div>
+</div>
+
+<div class="overlay" id="overlayStart">
+  <div class="panel">
+    <h1>EMBERLINE</h1>
+    <p>5v5 round-based tactical FPS in Ember Yard, a freight yard at dusk.<br>
+    Ember attacks — plant the bomb at Crane Bay or Silo Row. Slate defends.</p>
+    <p class="controls">WASD move &nbsp;•&nbsp; Mouse aim &nbsp;•&nbsp; Click shoot &nbsp;•&nbsp; R reload<br>
+    B buy menu &nbsp;•&nbsp; 1–4 weapons &nbsp;•&nbsp; Q cycle &nbsp;•&nbsp; G grenade<br>
+    E plant / hold &nbsp;•&nbsp; Space jump &nbsp;•&nbsp; C crouch &nbsp;•&nbsp; Shift walk slow<br>
+    Right mouse scopes the Longbow DMR</p>
+    <p>First to 5 rounds wins the match. Kills pay $300, plants pay $300.</p>
+    <button id="startBtn">CLICK TO PLAY</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlayPause">
+  <div class="panel">
+    <h2>PAUSED</h2>
+    <p>The round is waiting for you.</p>
+    <button id="resumeBtn">RESUME</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlayDown">
+  <div class="panel">
+    <h2>YOU ARE DOWN</h2>
+    <p>Your team fights on — the round ends when one side falls or the bomb decides it.</p>
+  </div>
+</div>
+
+<div class="overlay" id="overlayMatch">
+  <div class="panel">
+    <h2 id="matchTitle">EMBER WINS THE MATCH</h2>
+    <p id="matchSub"></p>
+    <button id="againBtn">PLAY AGAIN</button>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
